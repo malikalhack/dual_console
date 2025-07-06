@@ -11,9 +11,8 @@ void WriteToConsole(HANDLE hConsole, int y, const std::string& message) {
 
 int main() {
 #if OPTION == 1
-    const char* pipeName = R"(\\.\pipe\MyPipe)";
     const char* message = "Hello from the server!";
-    char buffer[128];
+    char buffer[BUF_SIZE];
     DWORD bytesRead;
     DWORD bytesWritten;
 
@@ -28,7 +27,34 @@ int main() {
         std::cerr << "Error creating channel.\n";
         return 1;
     }
-#elif OPTION == 2
+#elif OPTION == 2    
+    const char* message = "Hello from process #1!";
+
+    HANDLE hWriteEvent = CreateEventA(nullptr, FALSE, FALSE, writeEventName);
+    HANDLE hReadEvent = CreateEventA(nullptr, FALSE, FALSE, readEventName);
+    HANDLE hMap = CreateFileMappingA(
+        INVALID_HANDLE_VALUE,   // Используем файл подкачки
+        nullptr,
+        PAGE_READWRITE,
+        0,
+        BUF_SIZE,
+        sharedName
+    );
+    if (!hMap) {
+        std::cerr << "Error CreateFileMapping: " << GetLastError() << std::endl;
+        return 1;
+    }
+
+    LPSTR pBuf = (LPSTR)MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, BUF_SIZE);
+    if (!pBuf) {
+        std::cerr << "Error MapViewOfFile: " << GetLastError() << std::endl;
+        CloseHandle(hMap);
+        return 1;
+    }
+
+    CopyMemory(pBuf, message, strlen(message) + 1);
+    std::cout << "The message has been written to shared memory.\n";
+    SetEvent(hWriteEvent); // сигнализируем, что данные готовы
 
 #endif
 
@@ -61,16 +87,19 @@ int main() {
     ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr);
     buffer[bytesRead] = '\0';
 
-    std::cout << "Message received: " << buffer << "\n";
+    std::cout << "Message received: " << buffer << std::endl;
 
     WriteFile(hPipe, message, (DWORD)strlen(message), &bytesWritten, nullptr);
+#elif OPTION == 2
+    WaitForSingleObject(hReadEvent, INFINITE); // ждём ответ
+    std::cout << "Process #1 received: " << pBuf << std::endl;
 #endif
 
-    std::cout << "Main console: Typing message...\n";
+    std::cout << "\nMain console: Typing message...";
 
     // Пишем в текущую консоль
     HANDLE hConsoleMain = GetStdHandle(STD_OUTPUT_HANDLE);
-    WriteToConsole(hConsoleMain, 3, "This is the main console.");
+    WriteToConsole(hConsoleMain, 4, "This is the main console.");
 
     // ждем, пока дочерний процесс закончит работу
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -78,6 +107,9 @@ int main() {
     // Очистка
 #if OPTION == 1
     CloseHandle(hPipe);
+#elif OPTION == 2
+    UnmapViewOfFile(pBuf);
+    CloseHandle(hMap);
 #endif
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);

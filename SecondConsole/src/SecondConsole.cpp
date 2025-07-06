@@ -10,11 +10,12 @@ void wait_in_seconds(uint32_t sec = 0) {
 int main() {
 #if OPTION == 0
     std::cout << "Child console: greetings from the second window!" << std::endl;
-    wait_in_seconds(15);
+    wait_in_seconds(5);
 #elif OPTION == 1
-    const char* pipeName = R"(\\.\pipe\MyPipe)";
+    char buffer[BUF_SIZE];
     const char* message = "Hello from the client!";
     DWORD bytesWritten;
+    DWORD bytesRead;
 
     HANDLE hPipe = CreateFileA(
         pipeName,
@@ -31,16 +32,30 @@ int main() {
 
     WriteFile(hPipe, message, (DWORD)strlen(message), &bytesWritten, nullptr);
 
-    char buffer[128];
-    DWORD bytesRead;
     ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr);
     buffer[bytesRead] = '\0';
-    std::cout << "Message received: " << buffer << "\n";
+    std::cout << "Message received: " << buffer << std::endl;
 
     CloseHandle(hPipe);
     wait_in_seconds(10);
 #elif OPTION == 2
+    const char* message = "Reply from process #2!";
 
+    HANDLE hMap = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, sharedName);
+    LPSTR pBuf = (LPSTR)MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, BUF_SIZE);
+
+    HANDLE hWriteEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, writeEventName);
+    HANDLE hReadEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, readEventName);
+
+    WaitForSingleObject(hWriteEvent, INFINITE); // ждём, пока процесс 1 запишет
+    std::cout << "Process #2 received: " << pBuf << std::endl;
+
+    CopyMemory(pBuf, message, strlen(message) + 1);
+    SetEvent(hReadEvent); // сигнализируем, что ответ готов
+
+    UnmapViewOfFile(pBuf);
+    CloseHandle(hMap);
+    wait_in_seconds(10);
 #else
 #error Unexpected option
 #endif
